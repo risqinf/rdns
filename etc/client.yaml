@@ -1,0 +1,46 @@
+# rdns-client (decision node) — Docker runtime config.
+# Mounted read-only into the container at /etc/rdns/client.yaml.
+# Paths below are INSIDE the container (see docker-compose.yml volumes).
+#
+# NOTE: the container runs with network_mode: host + CAP_NET_ADMIN, so the
+# nftables redirects it installs apply to the HOST — that is the point.
+# Run this on the box that has autoscript.
+
+listen:
+  dns:  "0.0.0.0:5353"    # udp — receives redirected udp/53
+  sni:  "0.0.0.0:14300"   # tcp — receives redirected tcp/443,80
+  quic: "0.0.0.0:14400"   # udp — receives TPROXY redirected udp/443 (QUIC/HTTP3)
+
+rules: /etc/rdns/rules.json
+
+tls:
+  ca_file:   /etc/rdns/ca.crt
+  cert_file: /etc/rdns/certs/node-sg.crt
+  key_file:  /etc/rdns/certs/node-sg.key
+
+profiles:
+  - name: my
+    server:      <EXIT_IP>:443     # ← GANTI: IP publik exit node MY Anda
+    server_name: exit-my           # ← JANGAN diubah: harus sama dgn nama cert
+    dns:         <EXIT_IP>:53      # ← GANTI: IP yang sama
+
+dns:
+  default_upstream: "8.8.8.8:53"   # resolver for UNMATCHED domains
+  timeout: 3s
+  query_size: 1232
+
+reconnect:
+  min: 1s
+  max: 60s
+
+tunnel_mark: 219750615             # 0xd1920d7 — must match the nftables mark
+
+# Protect this box's own endpoints (autoscript VPN on 443, SSH, etc.).
+# Auto-detect is correct for dynamic/residential IPs — see SETUP.md §4.
+auto_local_ips: true
+local_ip_refresh: 60s
+local_ips: []
+
+logging:
+  level: info
+  file: /var/log/rdns-client.log

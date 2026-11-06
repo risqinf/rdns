@@ -1,0 +1,119 @@
+# rdns — Docker Compose (best practice)
+#
+# PRODUCTION SHAPE: rdns-client and rdns-server normally run on DIFFERENT
+# VPSes. Use this one file on both hosts, selecting the role with profiles:
+#
+#   exit node (Alpine/any Docker host):
+#     docker compose --profile server up -d --build
+#
+#   decision node (Rocky + autoscript):
+#     docker compose --profile client up -d --build
+#
+#   one-shot PKI helper (run once, anywhere, output in ./pki):
+#     docker compose run --rm certs ca     -name rdns-ca -out /pki
+#     docker compose run --rm certs client -ca /pki/ca.crt -cakey /pki/ca.key \
+#       -name node-sg -out /pki/certs
+#     docker compose run --rm certs server -ca /pki/ca.crt -cakey /pki/ca.key \
+#       -name exit-my -dns exit-my.example.com -ip <EXIT_IP> -out /pki/certs
+#
+# For a LOCAL TEST of the whole system on one machine, see
+# docker-compose.test.yml instead.
+#
+# ── Why network_mode: host (NOT a bridge) ───────────────────────────────────
+#  • rdns-client: nftables is HOST-KERNEL state. A container in its own netns
+#    would install redirects that only affect that namespace — useless. Host
+#    mode lets it intercept the host's (and autoscript's) traffic.
+#  • rdns-server: the udp/53 ACL allowlists SOURCE IPs. Behind a docker bridge
+#    every query arrives from the bridge gateway IP, so the ACL can't tell
+#    nodes apart. Host mode preserves the real source IP.
+#  Consequence: no `ports:` mappings (ignored in host mode); bind addresses in
+#  the YAML configs are used directly.
+
+name: rdns
+
+services:
+  # ─── exit node (e.g. Malaysia) ────────────────────────────────────────────
+  rdns-server:
+    profiles: ["server"]
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-docker}
+    image: rdns:${VERSION:-local}
+    container_name: rdns-server
+    command: ["-config", "/etc/rdns/server.yaml"]
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    cap_add:
+      - NET_BIND_SERVICE        # bind udp/53 + tcp/80 as non-root
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./etc/server.yaml:/etc/rdns/server.yaml:ro
+      - ./pki/ca.crt:/etc/rdns/ca.crt:ro
+      - ./pki/certs:/etc/rdns/certs:ro
+      - rdns-acme-cache:/var/lib/rdns          # LE certs survive restarts
+      - ./logs:/var/log                        # example config logs to /var/log/*.log
+    healthcheck:
+      # TCP connect to the tunnel port; the mTLS check happens per-connection.
+      test: ["CMD", "nc", "-z", "127.0.0.1", "443"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ─── decision node (Rocky + autoscript) ───────────────────────────────────
+  rdns-client:
+    profiles: ["client"]
+    image: rdns:${VERSION:-local}
+    container_name: rdns-client
+    command: ["-config", "/etc/rdns/client.yaml"]
+    entrypoint: ["/usr/local/bin/rdns-client"]
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    cap_add:
+      - NET_ADMIN               # nftables redirects + SO_MARK
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./etc/client.yaml:/etc/rdns/client.yaml:ro
+      - ./etc/rules.json:/etc/rdns/rules.json:ro
+      - ./pki/ca.crt:/etc/rdns/ca.crt:ro
+      - ./pki/certs:/etc/rdns/certs:ro
+      - ./logs:/var/log
+    healthcheck:
+      # the rdns nftables table must exist (applied at startup)
+      test: ["CMD", "nft", "list", "table", "ip", "rdns"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ─── one-shot PKI helper (not started by `up`) ────────────────────────────
+  certs:
+    profiles: ["certs", "tools"]
+    image: rdns:${VERSION:-local}
+    entrypoint: ["/usr/local/bin/rdns-certs"]
+    user: "0:0"                 # writing ./pki from the container needs write perms
+    volumes:
+      - ./pki:/pki
+    restart: "no"
+
+volumes:
+  rdns-acme-cache:

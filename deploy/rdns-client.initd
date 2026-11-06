@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+description="rdns-client (decision node: split DNS + SNI/QUIC traffic router)"
+command="/usr/local/bin/rdns-client"
+command_args="-config /etc/rdns/client.yaml"
+command_background=true
+pidfile="/run/rdns-client.pid"
+extra_commands="reload"
+
+depend() {
+    need net
+    after firewall
+}
+
+reload() {
+    ebegin "Reloading rdns-client rules"
+    if [ -f "$pidfile" ]; then
+        kill -HUP $(cat "$pidfile")
+    else
+        killall -HUP rdns-client 2>/dev/null
+    fi
+    eend $?
+}
+
+stop_post() {
+    # Failsafe nftables cleanup on stop/crash
+    /usr/sbin/nft delete table ip rdns 2>/dev/null || true
+    /usr/sbin/nft delete table ip6 rdns 2>/dev/null || true
+}

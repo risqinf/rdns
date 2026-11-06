@@ -1,0 +1,40 @@
+# rdns-client — LOCAL TEST config (docker-compose.test.yml).
+# Runs with -no-nft: inside its own netns there is nothing to redirect, so
+# the smoke container talks to the interceptors directly on :5353 / :14300 —
+# exercising the same decision code (rule match → tunnel vs direct).
+
+listen:
+  dns:  "0.0.0.0:5353"
+  sni:  "0.0.0.0:14300"
+  quic: "0.0.0.0:14400"
+
+rules: /etc/rdns/rules.json
+
+tls:
+  ca_file:   /pki/ca.crt
+  cert_file: /pki/certs/node-test.crt
+  key_file:  /pki/certs/node-test.key
+
+profiles:
+  - name: my
+    server:      exit:443          # docker service name → 172.28.0.20
+    server_name: exit-my           # matches the static cert's DNS SAN
+    dns:         exit:53
+
+dns:
+  default_upstream: "8.8.8.8:53"
+  timeout: 3s
+
+reconnect:
+  min: 1s
+  max: 5s
+
+tunnel_mark: 219750615
+
+auto_local_ips: true
+local_ip_refresh: 60s
+local_ips: []
+
+logging:
+  level: debug
+  file: ""

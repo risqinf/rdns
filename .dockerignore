@@ -1,0 +1,16 @@
+# Build-context hygiene: keep the image build fast and the context small.
+.git
+.gitignore
+.github
+dist/
+pki/
+bin/
+docs/
+*.md
+!README.md
+docker-compose*.yml
+deploy/
+examples/
+Makefile
+Dockerfile
+.dockerignore

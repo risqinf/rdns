@@ -1,0 +1,27 @@
+[Unit]
+Description=rdns-server (exit node: ACL DNS answer + mTLS yamux relay)
+Documentation=https://github.com/risqinf/rdns
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# The static binary (Alpine, musl).
+ExecStart=/usr/local/bin/rdns-server -config /etc/rdns/server.yaml
+SyslogIdentifier=rdns-server
+
+# Hardening. The ACME cert cache lives in /var/lib/rdns/acme.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rdns /var/log/rdns-server.log
+ProtectHome=true
+PrivateTmp=true
+LimitNOFILE=65536
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

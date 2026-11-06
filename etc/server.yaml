@@ -1,0 +1,38 @@
+# rdns-server (exit node) — runtime config.
+# Mounted at /etc/rdns/server.yaml (Docker) or copied there (SETUP.md §C.2).
+#
+# DEFAULT = STATIC CERT mode → works with NO domain, NO Cloudflare, NO
+# Let's Encrypt. This is the quick-test path (SETUP.md §C).
+# Switch to Let's Encrypt for production by following SETUP.md §D.
+
+listen:
+  dns:    "0.0.0.0:53"    # udp — public DNS answer service (ACL-gated)
+  tunnel: "0.0.0.0:443"   # tcp — mTLS yamux tunnel
+  # acme intentionally unset → port 80 is NOT opened (static-cert mode)
+
+tls:
+  # --- STATIC CERT (default; from `rdns-certs server`, SETUP.md §C.1) ------
+  cert_file:  /etc/rdns/certs/exit-my.crt
+  key_file:   /etc/rdns/certs/exit-my.key
+
+  # --- LET'S ENCRYPT (production; see SETUP.md §D) -------------------------
+  # Comment the two lines above, uncomment this, and set listen.acme:
+  # domain: exit-my.example.com
+
+  client_cas: /etc/rdns/ca.crt          # internal CA that signs node certs
+  # revoked_certs: /etc/rdns/certs/revoked.crt   # optional; may be absent
+
+acl:
+  allowed:
+    - 203.0.113.10      # ← GANTI: IP publik decision node Anda
+  rate_per_sec: 50
+  burst: 100
+
+dns:
+  upstreams: [system]   # answer with this box's local resolver (MY view)
+  timeout: 3s
+
+logging:
+  level: info
+  file: ""              # empty = stdout (journalctl / docker logs)
+  # file: /var/log/rdns-server.log   # uncomment to also write a file

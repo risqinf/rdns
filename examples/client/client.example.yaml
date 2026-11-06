@@ -1,0 +1,79 @@
+# rdns-client (decision node) — runs on the VPS VPN box (Rocky Linux,
+# co-located with autoscript). All traffic is outbound; no inbound ports.
+#
+# This example wires up two exit profiles: `my` (Malaysia) and `id`
+# (Indonesia). Domain rules live in `rules` (see rules.example.json).
+
+# Where the interceptors bind (after nftables redirect).
+listen:
+  dns:  "0.0.0.0:5353"    # udp — receives redirected udp/53
+  sni:  "0.0.0.0:14300"   # tcp — receives redirected tcp/443,80
+  quic: "0.0.0.0:14400"   # udp — receives TPROXY redirected udp/443 (QUIC/HTTP3)
+
+# Domain rule list (JSON: { profile: [domains...] }).
+rules: /etc/rdns/rules.json
+
+# mTLS identity. The client cert is signed by the internal CA (see
+# `rdns-certs ca` / `rdns-certs client`).
+tls:
+  ca_file:   /etc/rdns/ca.crt
+  cert_file: /etc/rdns/certs/node-sg.crt
+  key_file:  /etc/rdns/certs/node-sg.key
+
+# One entry per exit node. `server` is the mTLS tunnel (tcp/443),
+# `server_name` is the TLS name to verify, `dns` is the forwarded-DNS
+# endpoint (udp/53).
+profiles:
+  - name: my
+    server:      exit-my.example.com:443
+    server_name: exit-my.example.com
+    dns:         exit-my.example.com:53
+  - name: id
+    server:      exit-id.example.com:443
+    server_name: exit-id.example.com
+    dns:         exit-id.example.com:53
+
+# DNS interceptor: queries for UNMATCHED domains go to this resolver.
+# Match it to the VPS's /etc/resolv.conf. autoscript sets 8.8.8.8/1.1.1.1
+# (not a systemd-resolved stub), so 8.8.8.8 is the right "direct" default
+# here. Leave it empty to auto-detect the first nameserver from
+# /etc/resolv.conf at startup.
+dns:
+  default_upstream: "8.8.8.8:53"
+  timeout: 3s
+  query_size: 1232
+
+# Tunnel auto-reconnect backoff.
+reconnect:
+  min: 1s
+  max: 60s
+
+# SO_MARK stamped on all rdns-client egress so nftables skips it.
+# Must equal the mark in the nftables rule (0xd1920d7 = "rdns").
+tunnel_mark: 219750615    # decimal for 0xd1920d7
+
+# --- Protecting the node's own endpoints (VPS & residential) --------------
+# Traffic to the node's OWN addresses is NOT redirected, so autoscript's
+# VPN endpoints (VLESS/Trojan/SSH-WS on 443, OpenVPN, SSH) keep working.
+#
+# auto_local_ips (default true) discovers this box's interface addresses at
+# startup and re-checks every local_ip_refresh — correct for DYNAMIC /
+# RESIDENTIAL IPs (DHCP renew, reconnect, CGNAT re-pool) with no manual
+# editing. Behind a router/NAT, inbound VPN traffic arrives with daddr =
+# the box's LOCAL interface IP, which is exactly what gets detected.
+auto_local_ips: true
+local_ip_refresh: 60s          # re-detect interval (0 = only at startup)
+# local_ip_exclude:            # interface-name prefixes to ignore
+#   - docker                   # (defaults: docker, br-, veth, virbr, tun,
+#   - vmnet                    #    tap, wg — you rarely need to change this)
+#
+# local_ips: pin extra addresses manually (merged with auto-detected).
+# Only needed if auto-detect misses something (e.g. a public IP bound to a
+# loopback alias). Static VPS owners may still list their IP here and set
+# auto_local_ips: false.
+local_ips: []
+  # - 203.0.113.10
+
+logging:
+  level: info
+  file: /var/log/rdns-client.log

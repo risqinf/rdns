@@ -1,0 +1,40 @@
+[Unit]
+Description=rdns-client (decision node: split DNS + SNI traffic router)
+Documentation=https://github.com/risqinf/rdns
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# nftables redirects + SO_MARK require root (or CAP_NET_ADMIN + CAP_NET_RAW).
+User=root
+# The static binary. Build with the Makefile:
+#   CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=vX" -o rdns-client ./cmd/rdns-client
+ExecStart=/usr/local/bin/rdns-client -config /etc/rdns/client.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# The SO_MARK value must match client.yaml tunnel_mark.
+SyslogIdentifier=rdns-client
+
+# Hardening (keeps the small footprint honest). nftables needs NET_ADMIN;
+# SO_MARK on a connected socket needs NET_ADMIN too on modern kernels.
+AmbientCapabilities=NET_ADMIN
+CapabilityBoundingSet=NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+# Writable path: the log file (opened by the binary).
+ReadWritePaths=/var/log/rdns-client.log
+ProtectHome=true
+PrivateTmp=true
+LimitNOFILE=65536
+
+Restart=always
+RestartSec=5
+# Graceful drain (see main): in-flight relays get a bounded window.
+TimeoutStopSec=15
+# Failsafe cleanup: ensure nftables redirects are always removed even on crash or abrupt restart
+ExecStopPost=-/usr/sbin/nft delete table ip rdns
+ExecStopPost=-/usr/sbin/nft delete table ip6 rdns
+
+[Install]
+WantedBy=multi-user.target

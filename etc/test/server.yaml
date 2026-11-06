@@ -1,0 +1,26 @@
+# rdns-server — LOCAL TEST config (docker-compose.test.yml).
+# Static internal-CA cert (no Let's Encrypt / no public DNS needed).
+
+listen:
+  dns:    "0.0.0.0:53"
+  tunnel: "0.0.0.0:443"
+  # no acme listener in the test (static cert mode)
+
+tls:
+  cert_file: /pki/certs/exit-my.crt
+  key_file:  /pki/certs/exit-my.key
+  client_cas: /pki/ca.crt
+
+acl:
+  allowed:
+    - 172.28.0.0/24     # the test network (see docker-compose.test.yml)
+  rate_per_sec: 100
+  burst: 200
+
+dns:
+  upstreams: [system]
+  timeout: 3s
+
+logging:
+  level: debug        # container logs go to stdout (docker logs)
+  file: ""

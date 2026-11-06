@@ -1,0 +1,98 @@
+# rdns — LOCAL SMOKE TEST on a single Docker host (no VPS needed).
+#
+# Brings up a mini deployment on a private bridge network:
+#
+#   setup  → mints a throwaway PKI into a shared volume (one-shot)
+#   exit   → rdns-server with a static internal-CA cert, ACL = test subnet
+#   client → rdns-client with --no-nft (redirects would need host netns);
+#            the smoke container talks to its interceptors DIRECTLY on
+#            :5353 / :14300, exercising the same decision code paths.
+#   smoke  → dig (DNS split) + openssl s_client (tunnel relay) + stats
+#
+#   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+#   docker compose -f docker-compose.test.yml down -v
+#
+# Expected smoke output ends with: "SMOKE TEST PASSED".
+
+name: rdns-test
+
+networks:
+  rdns-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24   # must match etc/test/server.yaml acl.allowed
+
+volumes:
+  pki-test: {}
+
+services:
+  setup:
+    build:
+      context: .
+      args: { VERSION: test }
+    image: rdns:test
+    entrypoint: ["sh", "/scripts/test-entrypoint.sh"]
+    command: ["true"]
+    user: "0:0"
+    volumes:
+      - pki-test:/pki
+      - ./docker:/scripts:ro
+    restart: "no"
+    networks: [rdns-test]
+
+  exit:
+    image: rdns:test
+    command: ["-config", "/etc/rdns/server.yaml"]
+    entrypoint: ["/usr/local/bin/rdns-server"]
+    cap_add: [NET_BIND_SERVICE]   # bind udp/53 + tcp/443 as uid 10001
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    volumes:
+      - ./etc/test/server.yaml:/etc/rdns/server.yaml:ro
+      - pki-test:/pki:ro
+    networks:
+      rdns-test:
+        ipv4_address: 172.28.0.20   # matches etc/test/server.yaml cert SAN + smoke assertion
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "443"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: "no"
+
+  client:
+    image: rdns:test
+    entrypoint: ["/usr/local/bin/rdns-client"]
+    command: ["-config", "/etc/rdns/client.yaml", "-no-nft"]
+    depends_on:
+      setup: { condition: service_completed_successfully }
+      exit: { condition: service_healthy }
+    cap_add: [NET_ADMIN]        # SO_MARK on its own egress (harmless in netns)
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./etc/test/client.yaml:/etc/rdns/client.yaml:ro
+      - ./etc/test/rules.json:/etc/rdns/rules.json:ro
+      - pki-test:/pki:ro
+    networks: [rdns-test]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "14300"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: "no"
+
+  smoke:
+    image: alpine:3.22
+    depends_on:
+      client: { condition: service_healthy }
+    command: ["sh", "-c", "apk add --no-cache bind-tools busybox >/dev/null && sh /scripts/smoke.sh"]
+    volumes:
+      - ./docker:/scripts:ro
+    networks: [rdns-test]
+    restart: "no"

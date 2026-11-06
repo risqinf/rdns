@@ -1,0 +1,25 @@
+# Build artifacts
+dist/
+bin/
+*.exe
+
+# PKI material — NEVER commit private keys
+pki/
+certs-saya/
+*.key
+
+# Internal plans & drafts
+*plan*.md
+plan*
+PLAN*
+
+# Runtime state & logs
+logs/
+*.log
+/var/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

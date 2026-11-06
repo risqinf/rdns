@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="rdns-server (exit node: ACL DNS answer + mTLS yamux relay)"
+command="/usr/local/bin/rdns-server"
+command_args="-config /etc/rdns/server.yaml"
+command_background=true
+pidfile="/run/rdns-server.pid"
+
+depend() {
+    need net
+}
