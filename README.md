@@ -68,11 +68,16 @@ Di VPS Exit Node (tujuan egress), jalankan installer otomatis:
 git clone --depth 1 https://github.com/risqinf/rdns.git
 cd rdns
 bash install-server.sh
+
+# Atau mode otomatis langsung terima default (IP auto-detect, port 443 & 53):
+bash install-server.sh -y
 ```
 
 *(Atau tanpa clone, langsung 1-baris via curl):*
 ```bash
 curl -sSL https://raw.githubusercontent.com/risqinf/rdns/main/install-server.sh | bash
+# atau otomatis yes:
+curl -sSL https://raw.githubusercontent.com/risqinf/rdns/main/install-server.sh | bash -s -- -y
 ```
 
 *(Atau jalankan dengan parameter satu baris, sangat cocok untuk **NatVPS** dengan port custom):*
