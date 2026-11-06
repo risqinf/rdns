@@ -56,8 +56,30 @@ case "$UNAME_M" in
     ;;
 esac
 
+is_valid_ip() {
+  local ip="${1:-}"
+  local rx="^([0-9]{1,3}\.){3}[0-9]{1,3}$"
+  if [[ "$ip" =~ $rx ]]; then
+    local IFS="."
+    local i1 i2 i3 i4
+    read -r i1 i2 i3 i4 <<< "$ip"
+    (( i1 <= 255 && i2 <= 255 && i3 <= 255 && i4 <= 255 ))
+    return $?
+  fi
+  if [[ "$ip" =~ : ]]; then
+    return 0
+  fi
+  return 1
+}
+
+is_valid_port() {
+  local p="${1:-}"
+  [[ "$p" =~ ^[0-9]+$ ]] && (( p >= 1 && p <= 65535 ))
+}
+
 # --- Auto-detect Public IP ---
 DETECTED_IP="$(curl -s4 --max-time 3 https://api.ipify.org || curl -s4 --max-time 3 https://ifconfig.me || curl -s4 --max-time 3 https://ip.sb || echo "")"
+DETECTED_IP="$(echo "$DETECTED_IP" | tr -d '[:space:]\\')"
 
 # --- Parse Flags or Prompt ---
 INPUT_IP=""
@@ -98,7 +120,13 @@ prompt_read() {
   elif [[ -e /dev/tty ]]; then
     read -rp "$prompt_text" val </dev/tty || true
   fi
-  printf -v "$var_name" '%s' "${val:-$default_val}"
+  # Clean val: strip carriage returns, newlines, and trailing/leading spaces or stray backslashes
+  val="$(echo "$val" | tr -d '\r\n')"
+  val="$(echo "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [[ "$val" == "\\" || -z "$val" ]]; then
+    val="$default_val"
+  fi
+  printf -v "$var_name" '%s' "$val"
 }
 
 if [[ "$AUTO_YES" == "true" ]]; then
@@ -118,15 +146,41 @@ else
     SERVER_IP="$INPUT_IP"
   fi
 
-  if [[ -z "$SERVER_IP" ]]; then
-    err "IP Publik Server tidak boleh kosong."
-    exit 1
-  fi
-
   prompt_read " Port Tunnel mTLS (Yamux) [default: ${INPUT_TUNNEL_PORT}]: " TUNNEL_PORT "$INPUT_TUNNEL_PORT"
   prompt_read " Port DNS Upstream [default: ${INPUT_DNS_PORT}]: " DNS_PORT "$INPUT_DNS_PORT"
   prompt_read " Nama Profil / Kode Negara (misal: my, id, sg) [default: ${INPUT_PROFILE}]: " PROFILE "$INPUT_PROFILE"
-  PROFILE="$(echo "$PROFILE" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+fi
+
+# Sanitize and validate SERVER_IP
+SERVER_IP="$(echo "${SERVER_IP:-}" | tr -d '[:space:]\\')"
+if ! is_valid_ip "$SERVER_IP"; then
+  if is_valid_ip "${DETECTED_IP:-}"; then
+    warn "IP Server yang dimasukkan ('$SERVER_IP') tidak valid. Menggunakan IP terdeteksi otomatis: ${DETECTED_IP}"
+    SERVER_IP="$DETECTED_IP"
+  else
+    err "IP Publik Server '$SERVER_IP' tidak valid. Harap masukkan IPv4 yang benar (contoh: 172.235.251.67)."
+    exit 1
+  fi
+fi
+
+# Sanitize and validate TUNNEL_PORT
+TUNNEL_PORT="$(echo "${TUNNEL_PORT:-}" | tr -d '[:space:]\\')"
+if ! is_valid_port "$TUNNEL_PORT"; then
+  warn "Port tunnel ('$TUNNEL_PORT') tidak valid. Menggunakan default: 443"
+  TUNNEL_PORT="443"
+fi
+
+# Sanitize and validate DNS_PORT
+DNS_PORT="$(echo "${DNS_PORT:-}" | tr -d '[:space:]\\')"
+if ! is_valid_port "$DNS_PORT"; then
+  warn "Port DNS ('$DNS_PORT') tidak valid. Menggunakan default: 53"
+  DNS_PORT="53"
+fi
+
+# Sanitize PROFILE
+PROFILE="$(echo "${PROFILE:-my}" | tr -d '[:space:]\\' | tr '[:upper:]' '[:lower:]')"
+if [[ -z "$PROFILE" ]]; then
+  PROFILE="my"
 fi
 
 echo ""
@@ -209,13 +263,16 @@ else
 fi
 
 info "Membuat sertifikat Server untuk IP ${SERVER_IP}..."
-/usr/local/bin/rdns-certs server \
-  -ca /etc/rdns/ca.crt \
-  -cakey /etc/rdns/ca.key \
-  -name "exit-${PROFILE}" \
-  -dns "exit-${PROFILE}.rdns,${SERVER_IP}" \
-  -ip "${SERVER_IP}" \
+server_args=(
+  server
+  -ca /etc/rdns/ca.crt
+  -cakey /etc/rdns/ca.key
+  -name "exit-${PROFILE}"
+  -dns "exit-${PROFILE}.rdns,${SERVER_IP}"
+  -ip "${SERVER_IP}"
   -out /etc/rdns/certs
+)
+/usr/local/bin/rdns-certs "${server_args[@]}"
 
 chmod 600 "/etc/rdns/certs/exit-${PROFILE}.key"
 chmod 644 "/etc/rdns/certs/exit-${PROFILE}.crt"
@@ -347,13 +404,16 @@ EOF
 chmod 755 /usr/local/bin/rdns-server-cli
 
 # --- Mint First Client Token ---
-PAIRING_TOKEN="$(/usr/local/bin/rdns-certs token \
-  -ca /etc/rdns/ca.crt \
-  -cakey /etc/rdns/ca.key \
-  -profile "$PROFILE" \
-  -server "${SERVER_IP}:${TUNNEL_PORT}" \
-  -server-name "exit-${PROFILE}.rdns" \
-  -dns "${SERVER_IP}:${DNS_PORT}")"
+token_args=(
+  token
+  -ca /etc/rdns/ca.crt
+  -cakey /etc/rdns/ca.key
+  -profile "$PROFILE"
+  -server "${SERVER_IP}:${TUNNEL_PORT}"
+  -server-name "exit-${PROFILE}.rdns"
+  -dns "${SERVER_IP}:${DNS_PORT}"
+)
+PAIRING_TOKEN="$(/usr/local/bin/rdns-certs "${token_args[@]}")"
 
 echo ""
 ui_rule
