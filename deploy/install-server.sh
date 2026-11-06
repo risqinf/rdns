@@ -64,6 +64,7 @@ INPUT_IP=""
 INPUT_TUNNEL_PORT="443"
 INPUT_DNS_PORT="53"
 INPUT_PROFILE="my"
+AUTO_YES="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,8 +72,9 @@ while [[ $# -gt 0 ]]; do
     --tunnel-port) INPUT_TUNNEL_PORT="$2"; shift 2 ;;
     --dns-port) INPUT_DNS_PORT="$2"; shift 2 ;;
     --profile) INPUT_PROFILE="$2"; shift 2 ;;
+    -y|--yes) AUTO_YES="true"; shift ;;
     -h|--help)
-      echo "Usage: $0 [--ip <PUBLIC_IP>] [--tunnel-port <443|NAT_PORT>] [--dns-port <53|NAT_PORT>] [--profile <my|id>]"
+      echo "Usage: $0 [--ip <PUBLIC_IP>] [--tunnel-port <443|NAT_PORT>] [--dns-port <53|NAT_PORT>] [--profile <my|id>] [-y|--yes]"
       exit 0
       ;;
     *) shift ;;
@@ -85,26 +87,47 @@ echo -e " ${WHITE}Credit:${NC} ${PINK}github: @risqinf${NC}"
 echo -e " ${WHITE}Platform:${NC} ${CYAN}Linux (${ARCH})${NC}"
 echo ""
 
-if [[ -z "$INPUT_IP" ]]; then
-  read -rp " Masukkan IP Publik Server ini [default: ${DETECTED_IP}]: " user_ip </dev/tty 2>/dev/null || user_ip=""
-  SERVER_IP="${user_ip:-$DETECTED_IP}"
+# Helper for interactive prompt that supports both normal execution and curl | bash
+prompt_read() {
+  local prompt_text="$1"
+  local var_name="$2"
+  local default_val="$3"
+  local val=""
+  if [[ -t 0 ]]; then
+    read -rp "$prompt_text" val || true
+  elif [[ -e /dev/tty ]]; then
+    read -rp "$prompt_text" val </dev/tty || true
+  fi
+  printf -v "$var_name" '%s' "${val:-$default_val}"
+}
+
+if [[ "$AUTO_YES" == "true" ]]; then
+  SERVER_IP="${INPUT_IP:-$DETECTED_IP}"
+  TUNNEL_PORT="$INPUT_TUNNEL_PORT"
+  DNS_PORT="$INPUT_DNS_PORT"
+  PROFILE="$INPUT_PROFILE"
+  info "Mode otomatis aktif (-y). Menggunakan parameter default:"
+  echo -e "  - IP Server    : ${CYAN}${SERVER_IP}${NC}"
+  echo -e "  - Port Tunnel  : ${CYAN}${TUNNEL_PORT}${NC}"
+  echo -e "  - Port DNS     : ${CYAN}${DNS_PORT}${NC}"
+  echo -e "  - Profil       : ${CYAN}${PROFILE}${NC}"
 else
-  SERVER_IP="$INPUT_IP"
+  if [[ -z "$INPUT_IP" ]]; then
+    prompt_read " Masukkan IP Publik Server ini [default: ${DETECTED_IP}]: " SERVER_IP "$DETECTED_IP"
+  else
+    SERVER_IP="$INPUT_IP"
+  fi
+
+  if [[ -z "$SERVER_IP" ]]; then
+    err "IP Publik Server tidak boleh kosong."
+    exit 1
+  fi
+
+  prompt_read " Port Tunnel mTLS (Yamux) [default: ${INPUT_TUNNEL_PORT}]: " TUNNEL_PORT "$INPUT_TUNNEL_PORT"
+  prompt_read " Port DNS Upstream [default: ${INPUT_DNS_PORT}]: " DNS_PORT "$INPUT_DNS_PORT"
+  prompt_read " Nama Profil / Kode Negara (misal: my, id, sg) [default: ${INPUT_PROFILE}]: " PROFILE "$INPUT_PROFILE"
+  PROFILE="$(echo "$PROFILE" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
 fi
-
-if [[ -z "$SERVER_IP" ]]; then
-  err "IP Publik Server tidak boleh kosong."
-  exit 1
-fi
-
-read -rp " Port Tunnel mTLS (Yamux) [default: ${INPUT_TUNNEL_PORT}]: " user_tunnel_port </dev/tty 2>/dev/null || user_tunnel_port=""
-TUNNEL_PORT="${user_tunnel_port:-$INPUT_TUNNEL_PORT}"
-
-read -rp " Port DNS Upstream [default: ${INPUT_DNS_PORT}]: " user_dns_port </dev/tty 2>/dev/null || user_dns_port=""
-DNS_PORT="${user_dns_port:-$INPUT_DNS_PORT}"
-
-read -rp " Nama Profil / Kode Negara (misal: my, id, sg) [default: ${INPUT_PROFILE}]: " user_prof </dev/tty 2>/dev/null || user_prof=""
-PROFILE="$(echo "${user_prof:-$INPUT_PROFILE}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
 
 echo ""
 info "Menyiapkan instalasi RDNS Server..."
