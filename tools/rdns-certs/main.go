@@ -51,7 +51,7 @@ func main() {
 		err = cmdServer(os.Args[2:])
 	case "token":
 		err = cmdToken(os.Args[2:])
-	case "-h", "--help", "help":
+	case "-h", "--help", "-help", "help":
 		usage()
 		return
 	default:

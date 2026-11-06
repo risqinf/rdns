@@ -190,7 +190,7 @@ if ! /usr/local/bin/rdns-server -help &>/dev/null && ! /usr/local/bin/rdns-serve
   err "Binary rdns-server tidak valid atau gagal dijalankan pada arsitektur $ARCH."
   exit 1
 fi
-if ! /usr/local/bin/rdns-certs -help &>/dev/null; then
+if ! /usr/local/bin/rdns-certs --help &>/dev/null && ! /usr/local/bin/rdns-certs -h &>/dev/null && ! /usr/local/bin/rdns-certs help &>/dev/null && ! /usr/local/bin/rdns-certs -help &>/dev/null; then
   err "Binary rdns-certs tidak valid atau gagal dijalankan pada arsitektur $ARCH."
   exit 1
 fi
