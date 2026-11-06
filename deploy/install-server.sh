@@ -86,7 +86,7 @@ echo -e " ${WHITE}Platform:${NC} ${CYAN}Linux (${ARCH})${NC}"
 echo ""
 
 if [[ -z "$INPUT_IP" ]]; then
-  read -rp " Masukkan IP Publik Server ini [default: ${DETECTED_IP}]: " user_ip
+  read -rp " Masukkan IP Publik Server ini [default: ${DETECTED_IP}]: " user_ip </dev/tty 2>/dev/null || user_ip=""
   SERVER_IP="${user_ip:-$DETECTED_IP}"
 else
   SERVER_IP="$INPUT_IP"
@@ -97,13 +97,13 @@ if [[ -z "$SERVER_IP" ]]; then
   exit 1
 fi
 
-read -rp " Port Tunnel mTLS (Yamux) [default: ${INPUT_TUNNEL_PORT}]: " user_tunnel_port
+read -rp " Port Tunnel mTLS (Yamux) [default: ${INPUT_TUNNEL_PORT}]: " user_tunnel_port </dev/tty 2>/dev/null || user_tunnel_port=""
 TUNNEL_PORT="${user_tunnel_port:-$INPUT_TUNNEL_PORT}"
 
-read -rp " Port DNS Upstream [default: ${INPUT_DNS_PORT}]: " user_dns_port
+read -rp " Port DNS Upstream [default: ${INPUT_DNS_PORT}]: " user_dns_port </dev/tty 2>/dev/null || user_dns_port=""
 DNS_PORT="${user_dns_port:-$INPUT_DNS_PORT}"
 
-read -rp " Nama Profil / Kode Negara (misal: my, id, sg) [default: ${INPUT_PROFILE}]: " user_prof
+read -rp " Nama Profil / Kode Negara (misal: my, id, sg) [default: ${INPUT_PROFILE}]: " user_prof </dev/tty 2>/dev/null || user_prof=""
 PROFILE="$(echo "${user_prof:-$INPUT_PROFILE}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
 
 echo ""
@@ -112,32 +112,67 @@ info "Menyiapkan instalasi RDNS Server..."
 # --- Install Binaries ---
 mkdir -p /usr/local/bin /etc/rdns/certs /var/log /var/lib/rdns/acme
 
-# Locate local binaries if available
+# 1. Check local prebuilt binaries if available
 BIN_SERVER=""
 BIN_CERTS=""
 
-if [[ -x "$RDNS_ROOT/dist/rdns-server-linux-$ARCH" ]]; then
+if [[ -n "${RDNS_ROOT:-}" && -x "$RDNS_ROOT/dist/rdns-server-linux-$ARCH" ]]; then
   BIN_SERVER="$RDNS_ROOT/dist/rdns-server-linux-$ARCH"
-elif [[ -x "$RDNS_ROOT/bin/rdns-server-linux" ]]; then
+elif [[ -n "${RDNS_ROOT:-}" && -x "$RDNS_ROOT/bin/rdns-server-linux" ]]; then
   BIN_SERVER="$RDNS_ROOT/bin/rdns-server-linux"
+elif [[ -x "/usr/local/bin/rdns-server" ]]; then
+  BIN_SERVER="/usr/local/bin/rdns-server"
 fi
 
-if [[ -x "$RDNS_ROOT/dist/rdns-certs-linux-$ARCH" ]]; then
+if [[ -n "${RDNS_ROOT:-}" && -x "$RDNS_ROOT/dist/rdns-certs-linux-$ARCH" ]]; then
   BIN_CERTS="$RDNS_ROOT/dist/rdns-certs-linux-$ARCH"
-elif [[ -x "$RDNS_ROOT/bin/rdns-certs-linux" ]]; then
+elif [[ -n "${RDNS_ROOT:-}" && -x "$RDNS_ROOT/bin/rdns-certs-linux" ]]; then
   BIN_CERTS="$RDNS_ROOT/bin/rdns-certs-linux"
+elif [[ -x "/usr/local/bin/rdns-certs" ]]; then
+  BIN_CERTS="/usr/local/bin/rdns-certs"
 fi
 
-if [[ -n "$BIN_SERVER" && -n "$BIN_CERTS" ]]; then
-  cp -f "$BIN_SERVER" /usr/local/bin/rdns-server
-  cp -f "$BIN_CERTS" /usr/local/bin/rdns-certs
-else
-  err "Binary rdns-server / rdns-certs tidak ditemukan di dist/ atau bin/. Jalankan 'make build' terlebih dahulu."
-  exit 1
+# 2. If not found locally, auto-download prebuilt static binaries from GitHub Releases
+GH_TAG="v0.2.0"
+RELEASE_BASE="https://github.com/risqinf/rdns/releases/download/${GH_TAG}"
+
+if [[ -z "$BIN_SERVER" || "$BIN_SERVER" != "/usr/local/bin/rdns-server" ]]; then
+  if [[ -n "$BIN_SERVER" ]]; then
+    cp -f "$BIN_SERVER" /usr/local/bin/rdns-server
+  else
+    info "Mengunduh binary static rdns-server (${ARCH}) dari GitHub Release (${GH_TAG})..."
+    if ! curl -sSL --connect-timeout 10 --max-time 60 -o /usr/local/bin/rdns-server "${RELEASE_BASE}/rdns-server-linux-${ARCH}"; then
+      err "Gagal mengunduh rdns-server dari GitHub Release (${RELEASE_BASE}/rdns-server-linux-${ARCH})."
+      exit 1
+    fi
+  fi
+fi
+
+if [[ -z "$BIN_CERTS" || "$BIN_CERTS" != "/usr/local/bin/rdns-certs" ]]; then
+  if [[ -n "$BIN_CERTS" ]]; then
+    cp -f "$BIN_CERTS" /usr/local/bin/rdns-certs
+  else
+    info "Mengunduh binary static rdns-certs (${ARCH}) dari GitHub Release (${GH_TAG})..."
+    if ! curl -sSL --connect-timeout 10 --max-time 60 -o /usr/local/bin/rdns-certs "${RELEASE_BASE}/rdns-certs-linux-${ARCH}"; then
+      err "Gagal mengunduh rdns-certs dari GitHub Release (${RELEASE_BASE}/rdns-certs-linux-${ARCH})."
+      exit 1
+    fi
+  fi
 fi
 
 chmod 755 /usr/local/bin/rdns-server /usr/local/bin/rdns-certs
-ok "Binary rdns-server & rdns-certs terpasang di /usr/local/bin"
+
+# Quick sanity check on binaries
+if ! /usr/local/bin/rdns-server -help &>/dev/null && ! /usr/local/bin/rdns-server -version &>/dev/null; then
+  err "Binary rdns-server tidak valid atau gagal dijalankan pada arsitektur $ARCH."
+  exit 1
+fi
+if ! /usr/local/bin/rdns-certs -help &>/dev/null; then
+  err "Binary rdns-certs tidak valid atau gagal dijalankan pada arsitektur $ARCH."
+  exit 1
+fi
+
+ok "Binary rdns-server & rdns-certs siap dan terpasang di /usr/local/bin"
 
 # --- Generate CA & Server Certificates ---
 if [[ ! -f /etc/rdns/ca.crt || ! -f /etc/rdns/ca.key ]]; then

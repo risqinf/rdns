@@ -64,8 +64,15 @@ See `rdns-prd.md` for the full product requirements and design rationale.
 ### 1. Setup Server / Exit Node (VPS Malaysia / Indonesia)
 Di VPS Exit Node (tujuan egress), jalankan installer otomatis:
 ```bash
-# Clone atau salin repository rdns, lalu jalankan:
+# 1. Clone repository rdns (hanya commit terakhir / super cepat):
+git clone --depth 1 https://github.com/risqinf/rdns.git
+cd rdns
 bash install-server.sh
+```
+
+*(Atau tanpa clone, langsung 1-baris via curl):*
+```bash
+curl -sSL https://raw.githubusercontent.com/risqinf/rdns/main/install-server.sh | bash
 ```
 
 *(Atau jalankan dengan parameter satu baris, sangat cocok untuk **NatVPS** dengan port custom):*
@@ -74,7 +81,7 @@ bash install-server.sh --ip 103.150.120.10 --tunnel-port 24443 --dns-port 10053 
 ```
 
 Skrip ini akan secara otomatis:
-1. Memasang binary `rdns-server` dan `rdns-certs` ke `/usr/local/bin/`.
+1. Mengunduh dan memasang binary resmi `rdns-server` & `rdns-certs` langsung dari GitHub Releases (tanpa perlu install compiler/Go di VPS).
 2. Men-generate Root CA dan sertifikat Server mTLS ECDSA.
 3. Mengonfigurasi `/etc/rdns/server.yaml`.
 4. Mengaktifkan daemon service (mendukung systemd di Ubuntu/Debian/Rocky/CentOS dan OpenRC di Alpine Linux).
