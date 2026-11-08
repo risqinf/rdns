@@ -484,6 +484,20 @@ TimeoutStopSec=15
 [Install]
 WantedBy=multi-user.target
 EOF
+    # Resolve Ubuntu/Debian port 53 conflict with systemd-resolved DNSStubListener
+    if command -v systemctl &>/dev/null && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+      if ss -ulpn 2>/dev/null | grep -q ":53 " || netstat -ulpn 2>/dev/null | grep -q ":53 "; then
+        info "Mengonfigurasi systemd-resolved untuk membebaskan port 53 DNS..."
+        if [[ -f /etc/systemd/resolved.conf ]]; then
+          sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null || true
+          grep -q "DNSStubListener=no" /etc/systemd/resolved.conf 2>/dev/null || echo "DNSStubListener=no" >> /etc/systemd/resolved.conf
+          systemctl restart systemd-resolved 2>/dev/null || true
+          rm -f /etc/resolv.conf 2>/dev/null || true
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8" > /etc/resolv.conf 2>/dev/null || true
+        fi
+      fi
+    fi
+
     systemctl daemon-reload
     systemctl enable rdns-server >/dev/null 2>&1 || true
     systemctl restart rdns-server
@@ -734,6 +748,20 @@ TimeoutStopSec=15
 [Install]
 WantedBy=multi-user.target
 EOF
+  # Resolve Ubuntu/Debian port 53 conflict with systemd-resolved DNSStubListener
+  if command -v systemctl &>/dev/null && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+    if ss -ulpn 2>/dev/null | grep -q ":53 " || netstat -ulpn 2>/dev/null | grep -q ":53 "; then
+      info "Mengonfigurasi systemd-resolved untuk membebaskan port 53 DNS..."
+      if [[ -f /etc/systemd/resolved.conf ]]; then
+        sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null || true
+        grep -q "DNSStubListener=no" /etc/systemd/resolved.conf 2>/dev/null || echo "DNSStubListener=no" >> /etc/systemd/resolved.conf
+        systemctl restart systemd-resolved 2>/dev/null || true
+        rm -f /etc/resolv.conf 2>/dev/null || true
+        echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8" > /etc/resolv.conf 2>/dev/null || true
+      fi
+    fi
+  fi
+
   systemctl daemon-reload
   systemctl enable rdns-server >/dev/null 2>&1 || true
   systemctl restart rdns-server
