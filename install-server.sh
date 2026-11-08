@@ -610,7 +610,7 @@ elif [[ -x "/usr/local/bin/rdns-certs" ]]; then
 fi
 
 # 2. If not found locally, auto-download prebuilt static binaries from GitHub Releases
-GH_TAG="v0.2.0"
+GH_TAG="${VERSION:-v0.2.1}"
 RELEASE_BASE="https://github.com/risqinf/rdns/releases/download/${GH_TAG}"
 
 if [[ -z "$BIN_SERVER" || "$BIN_SERVER" != "/usr/local/bin/rdns-server" ]]; then
