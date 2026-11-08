@@ -132,7 +132,7 @@ prompt_read() {
   printf -v "$var_name" '%s' "$val"
 }
 
-# --- CLI Helper Installer (Supports update, mint, status, logs, restart) ---
+# --- CLI Helper Installer (Supports interactive menu, mint, status, logs, restart, update) ---
 install_server_cli() {
   cat > /usr/local/bin/rdns-server-cli <<'EOF'
 #!/usr/bin/env bash
@@ -140,83 +140,259 @@ set -euo pipefail
 
 CONFIG="/etc/rdns/server.yaml"
 CA_KEY="/etc/rdns/ca.key"
+TOKEN_FILE="/etc/rdns/pairing_token.txt"
 
-case "${1:-}" in
-  mint)
-    prof="${2:-exit}"
-    days="${3:-365}"
-    if [[ ! -f "$CONFIG" ]]; then
-      echo "Config file not found: $CONFIG" >&2
-      exit 1
-    fi
-    /usr/local/bin/rdns-server -mint-token -config "$CONFIG" -cakey "$CA_KEY" -profile "$prof"
-    ;;
-  status)
-    if command -v systemctl &>/dev/null; then
-      systemctl status rdns-server --no-pager
-    elif command -v rc-service &>/dev/null; then
-      rc-service rdns-server status
-    fi
-    ;;
-  logs)
-    if [[ -f /var/log/rdns-server.log ]]; then
-      tail -f /var/log/rdns-server.log
-    elif command -v journalctl &>/dev/null; then
-      journalctl -u rdns-server -f
-    fi
-    ;;
-  restart)
-    if command -v systemctl &>/dev/null; then
-      systemctl restart rdns-server
-      echo "rdns-server restarted."
-    elif command -v rc-service &>/dev/null; then
-      rc-service rdns-server restart
-    fi
-    ;;
-  update)
-    echo "Memeriksa dan memperbarui binary rdns-server & rdns-certs..."
-    arch="$(uname -m)"
-    case "$arch" in
-      x86_64|amd64) r_arch="amd64" ;;
-      aarch64|arm64) r_arch="arm64" ;;
-      *) echo "Arsitektur tidak didukung: $arch" >&2; exit 1 ;;
-    esac
-    tag="v0.2.1"
-    base_url="https://github.com/risqinf/rdns/releases/download/${tag}"
-    tmp_dir="$(mktemp -d)"
-    echo "Mengunduh rdns-server (${tag})..."
-    if curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_dir}/rdns-server" "${base_url}/rdns-server-linux-${r_arch}" && \
-       curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_dir}/rdns-certs" "${base_url}/rdns-certs-linux-${r_arch}"; then
-      chmod 755 "${tmp_dir}/rdns-server" "${tmp_dir}/rdns-certs"
-      if "${tmp_dir}/rdns-server" -version &>/dev/null; then
-        cp -f "${tmp_dir}/rdns-server" /usr/local/bin/rdns-server
-        cp -f "${tmp_dir}/rdns-certs" /usr/local/bin/rdns-certs
-        rm -rf "$tmp_dir"
-        echo "Binary rdns-server berhasil diperbarui ke $(/usr/local/bin/rdns-server -version)"
-        if command -v systemctl &>/dev/null; then
-          systemctl restart rdns-server
-          systemctl status rdns-server --no-pager
-        elif command -v rc-service &>/dev/null; then
-          rc-service rdns-server restart
-          rc-service rdns-server status
-        fi
-      else
-        echo "Binary yang diunduh tidak valid." >&2
-        rm -rf "$tmp_dir"
-        exit 1
-      fi
+NC='\033[0m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+WHITE='\033[1;37m'
+PINK='\033[38;5;205m'
+ORANGE='\033[38;5;208m'
+
+do_mint() {
+  local prof="${1:-}"
+  local days="${2:-365}"
+  if [[ -z "$prof" ]]; then
+    read -rp " Masukkan nama profil exit node (contoh: my, id, sg) [default: my]: " prof
+    prof="${prof:-my}"
+  fi
+  if [[ ! -f "$CONFIG" ]]; then
+    echo -e " ${RED}[ERROR] File konfigurasi tidak ditemukan: $CONFIG${NC}" >&2
+    exit 1
+  fi
+  echo ""
+  echo -e " ${YELLOW}Membuat token pairing baru untuk profil '${prof}'...${NC}"
+  local tok
+  tok="$(/usr/local/bin/rdns-server -mint-token -config "$CONFIG" -cakey "$CA_KEY" -profile "$prof")"
+  echo "$tok" > "$TOKEN_FILE" 2>/dev/null || true
+  chmod 600 "$TOKEN_FILE" 2>/dev/null || true
+  echo ""
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  echo -e " ${GREEN}TOKEN PAIRING BERHASIL DIBUAT:${NC}"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  echo -e "${tok}"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  echo -e " ${WHITE}Copy token di atas lalu buka VPS Client (Autoscript Singapore):${NC}"
+  echo -e "   ${PINK}rdns-manager pair \"${tok}\"${NC}"
+  echo -e "   ${WHITE}atau via menu: ${GREEN}menu${NC} ➔ ${WHITE}SmartDNS/RDNS [1] Pair Exit Node${NC}"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+}
+
+do_show_token() {
+  echo ""
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  echo -e " ${WHITE}TOKEN PAIRING TERAKHIR DIBUAT:${NC}"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  if [[ -f "$TOKEN_FILE" && -s "$TOKEN_FILE" ]]; then
+    cat "$TOKEN_FILE"
+    echo ""
+    echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+    echo -e " ${WHITE}Gunakan perintah ini di VPS Client (Autoscript Singapore):${NC}"
+    echo -e "   ${PINK}rdns-manager pair \"$(cat "$TOKEN_FILE")\"${NC}"
+  else
+    echo -e " ${YELLOW}Belum ada token tersimpan. Membuat token baru untuk profil 'my'...${NC}"
+    do_mint "my"
+  fi
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+}
+
+do_status() {
+  echo ""
+  if command -v systemctl &>/dev/null; then
+    systemctl status rdns-server --no-pager
+  elif command -v rc-service &>/dev/null; then
+    rc-service rdns-server status
+  fi
+}
+
+do_logs() {
+  local lines="${1:-35}"
+  echo ""
+  echo -e " ${WHITE}Menampilkan ${lines} baris log terakhir:${NC}\n"
+  if [[ -f /var/log/rdns-server.log ]]; then
+    tail -n "$lines" /var/log/rdns-server.log
+  elif command -v journalctl &>/dev/null; then
+    journalctl -u rdns-server -n "$lines" --no-pager
+  fi
+}
+
+do_restart() {
+  echo ""
+  echo -e " ${YELLOW}Merestart service rdns-server...${NC}"
+  if command -v systemctl &>/dev/null; then
+    systemctl restart rdns-server
+    echo -e " ${GREEN}[OK] Service rdns-server berhasil direstart!${NC}"
+  elif command -v rc-service &>/dev/null; then
+    rc-service rdns-server restart
+    echo -e " ${GREEN}[OK] Service rdns-server (OpenRC) berhasil direstart!${NC}"
+  fi
+}
+
+do_update() {
+  echo ""
+  echo -e " ${YELLOW}Memeriksa dan memperbarui binary rdns-server & rdns-certs...${NC}"
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) r_arch="amd64" ;;
+    aarch64|arm64) r_arch="arm64" ;;
+    *) echo -e " ${RED}[ERROR] Arsitektur tidak didukung: $arch${NC}" >&2; exit 1 ;;
+  esac
+  local tag="v0.2.1"
+  local base_url="https://github.com/risqinf/rdns/releases/download/${tag}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  echo -e " ${WHITE}Mengunduh rdns-server (${tag})...${NC}"
+  if curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_dir}/rdns-server" "${base_url}/rdns-server-linux-${r_arch}" && \
+     curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_dir}/rdns-certs" "${base_url}/rdns-certs-linux-${r_arch}"; then
+    chmod 755 "${tmp_dir}/rdns-server" "${tmp_dir}/rdns-certs"
+    if "${tmp_dir}/rdns-server" -version &>/dev/null; then
+      cp -f "${tmp_dir}/rdns-server" /usr/local/bin/rdns-server
+      cp -f "${tmp_dir}/rdns-certs" /usr/local/bin/rdns-certs
+      rm -rf "$tmp_dir"
+      echo -e " ${GREEN}[OK] Binary rdns-server diperbarui ke: $(/usr/local/bin/rdns-server -version)${NC}"
+      do_restart
     else
-      echo "Gagal mengunduh update dari GitHub." >&2
+      echo -e " ${RED}[ERROR] Binary yang diunduh tidak valid.${NC}" >&2
       rm -rf "$tmp_dir"
       exit 1
     fi
+  else
+    echo -e " ${RED}[ERROR] Gagal mengunduh update dari GitHub.${NC}" >&2
+    rm -rf "$tmp_dir"
+    exit 1
+  fi
+}
+
+menu_server() {
+  clear
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  echo -e "  ${WHITE}RDNS SERVER MANAGER (EXIT NODE)${NC}"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  echo -e "  Credit  : ${PINK}github: @risqinf${NC}"
+  echo -e "  Versi   : ${GREEN}$(/usr/local/bin/rdns-server -version 2>/dev/null || echo 'v0.2.1')${NC}"
+  echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+  
+  local st_text
+  if systemctl is-active --quiet rdns-server 2>/dev/null; then
+    local pid
+    pid=$(pgrep -f "rdns-server.*-config" | head -1 || echo "")
+    [[ -z "$pid" ]] && pid=$(pgrep -x rdns-server | head -1 || echo "")
+    st_text="${GREEN}ACTIVE (RUNNING - PID: ${pid})${NC}"
+  elif command -v rc-service &>/dev/null && rc-service rdns-server status 2>/dev/null | grep -q started; then
+    st_text="${GREEN}ACTIVE (RUNNING)${NC}"
+  else
+    st_text="${RED}STOPPED${NC}"
+  fi
+  printf "  %-18s : %b\n" "Status Daemon" "$st_text"
+  
+  if [[ -f "$CONFIG" ]]; then
+    local t_port d_port
+    t_port=$(grep -E '^\s*tunnel:' "$CONFIG" 2>/dev/null | awk -F: '{print $NF}' | tr -d ' "' || echo "443")
+    d_port=$(grep -E '^\s*dns:' "$CONFIG" 2>/dev/null | awk -F: '{print $NF}' | tr -d ' "' || echo "53")
+    printf "  %-18s : ${WHITE}:%s TCP (Yamux TLS)${NC}\n" "Port Tunnel mTLS" "$t_port"
+    printf "  %-18s : ${WHITE}:%s UDP/TCP${NC}\n" "Port DNS Answer" "$d_port"
+  fi
+  echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+  echo -e "  ${ORANGE}[1]${NC} Buat Token Pairing Baru (Mint Token rdns://...)"
+  echo -e "  ${ORANGE}[2]${NC} Tampilkan Token Pairing Terakhir"
+  echo -e "  ${ORANGE}[3]${NC} Cek Status & Kesehatan Server (status)"
+  echo -e "  ${ORANGE}[4]${NC} Lihat Log Runtime Real-Time (logs)"
+  echo -e "  ${ORANGE}[5]${NC} Restart Service rdns-server"
+  echo -e "  ${ORANGE}[6]${NC} Update Binary Server ke Versi Terbaru (update)"
+  echo -e "  ${ORANGE}[0]${NC} Keluar"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+  read -rp " Pilih opsi [0-6]: " opt
+  case "$opt" in
+    1)
+      do_mint ""
+      echo ""
+      read -n 1 -s -r -p " Tekan tombol apa saja untuk kembali ke menu..."
+      menu_server
+      ;;
+    2)
+      do_show_token
+      echo ""
+      read -n 1 -s -r -p " Tekan tombol apa saja untuk kembali ke menu..."
+      menu_server
+      ;;
+    3)
+      do_status
+      echo ""
+      read -n 1 -s -r -p " Tekan tombol apa saja untuk kembali ke menu..."
+      menu_server
+      ;;
+    4)
+      do_logs 35
+      echo ""
+      read -n 1 -s -r -p " Tekan tombol apa saja untuk kembali ke menu..."
+      menu_server
+      ;;
+    5)
+      do_restart
+      echo ""
+      read -n 1 -s -r -p " Tekan tombol apa saja untuk kembali ke menu..."
+      menu_server
+      ;;
+    6)
+      do_update
+      echo ""
+      read -n 1 -s -r -p " Tekan tombol apa saja untuk kembali ke menu..."
+      menu_server
+      ;;
+    0|q|x|X)
+      exit 0
+      ;;
+    *)
+      menu_server
+      ;;
+  esac
+}
+
+# Subcommand dispatcher
+case "${1:-}" in
+  mint)
+    shift; do_mint "${1:-}" "${2:-365}"
+    ;;
+  token|show-token)
+    do_show_token
+    ;;
+  status)
+    do_status
+    ;;
+  logs)
+    shift; do_logs "${1:-35}"
+    ;;
+  restart)
+    do_restart
+    ;;
+  update)
+    do_update
+    ;;
+  menu)
+    menu_server
     ;;
   *)
-    echo "Usage: rdns-server-cli {mint [profile_name] [days]|status|logs|restart|update}"
+    if [[ -t 0 ]]; then
+      menu_server
+    else
+      echo "RDNS Server Helper (github: @risqinf)"
+      echo "Usage: rdns-server-cli {mint [profile_name] [days]|token|status|logs|restart|update|menu}"
+    fi
     ;;
 esac
 EOF
   chmod 755 /usr/local/bin/rdns-server-cli
+  ln -sf /usr/local/bin/rdns-server-cli /usr/local/bin/rdns 2>/dev/null || true
+  ln -sf /usr/local/bin/rdns-server-cli /usr/local/bin/rdns-menu 2>/dev/null || true
+  if [[ ! -e /usr/local/bin/menu ]]; then
+    ln -sf /usr/local/bin/rdns-server-cli /usr/local/bin/menu 2>/dev/null || true
+  fi
+  if [[ ! -e /usr/local/bin/rdns-manager ]]; then
+    ln -sf /usr/local/bin/rdns-server-cli /usr/local/bin/rdns-manager 2>/dev/null || true
+  fi
 }
 
 # --- Non-Destructive Update Routine ---
@@ -308,6 +484,7 @@ EOF
   printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Konfigurasi" "${GREEN}TERJAGA (/etc/rdns/server.yaml)${NC}"
   printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Sertifikat & CA" "${GREEN}UTUH (/etc/rdns/ca.crt)${NC}"
   printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Pairing Token" "${GREEN}TETAP VALID & AKTIF${NC}"
+  printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Menu Perintah" "${GREEN}menu${NC} atau ${GREEN}rdns${NC}"
   ui_rule
   exit 0
 }
@@ -575,6 +752,8 @@ token_args=(
   -dns "${SERVER_IP}:${DNS_PORT}"
 )
 PAIRING_TOKEN="$(/usr/local/bin/rdns-certs "${token_args[@]}")"
+echo "$PAIRING_TOKEN" > /etc/rdns/pairing_token.txt 2>/dev/null || true
+chmod 600 /etc/rdns/pairing_token.txt 2>/dev/null || true
 
 echo ""
 ui_rule
@@ -584,7 +763,7 @@ printf " ${WHITE}%-16s${NC} ${CYAN}:${NC} %b\n" "IP Server" "${SERVER_IP}"
 printf " ${WHITE}%-16s${NC} ${CYAN}:${NC} %b\n" "Port Tunnel" "${TUNNEL_PORT}"
 printf " ${WHITE}%-16s${NC} ${CYAN}:${NC} %b\n" "Port DNS" "${DNS_PORT}"
 printf " ${WHITE}%-16s${NC} ${CYAN}:${NC} %b\n" "Profile Name" "${PROFILE}"
-printf " ${WHITE}%-16s${NC} ${CYAN}:${NC} %b\n" "Server Helper" "rdns-server-cli"
+printf " ${WHITE}%-16s${NC} ${CYAN}:${NC} %b\n" "Server Helper" "rdns / menu / rdns-server-cli"
 ui_rule
 echo -e " ${YELLOW}TOKEN PAIRING (Copy & Paste ke Client Autoscript):${NC}"
 echo -e "${CYAN}${PAIRING_TOKEN}${NC}"
@@ -594,6 +773,6 @@ echo -e " ${PINK}rdns-manager pair \"${PAIRING_TOKEN}\"${NC}"
 echo ""
 echo -e " ${WHITE}Atau buka menu autoscript:${NC} ${GREEN}menu${NC} ➔ ${WHITE}Pilih Menu SmartDNS / RDNS${NC} ➔ ${WHITE}Pilih [1] Pair Exit Node Baru${NC}"
 ui_rule
-echo -e " ${WHITE}Jika ingin membuat token baru untuk client lain di kemudian hari:${NC}"
-echo -e " ${CYAN}rdns-server-cli mint <nama_profil>${NC}"
+echo -e " ${WHITE}Menu manajemen server dapat dibuka kapan saja dengan mengetik:${NC} ${GREEN}menu${NC} ${WHITE}atau${NC} ${GREEN}rdns${NC}"
+echo -e " ${WHITE}Untuk membuat token baru langsung:${NC} ${CYAN}rdns mint <nama_profil>${NC}"
 ui_rule
