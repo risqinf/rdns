@@ -87,6 +87,8 @@ INPUT_TUNNEL_PORT="443"
 INPUT_DNS_PORT="53"
 INPUT_PROFILE="my"
 AUTO_YES="false"
+MODE_UPDATE="false"
+GH_TAG="${VERSION:-v0.2.1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -94,9 +96,10 @@ while [[ $# -gt 0 ]]; do
     --tunnel-port) INPUT_TUNNEL_PORT="$2"; shift 2 ;;
     --dns-port) INPUT_DNS_PORT="$2"; shift 2 ;;
     --profile) INPUT_PROFILE="$2"; shift 2 ;;
+    -u|--update) MODE_UPDATE="true"; shift ;;
     -y|--yes) AUTO_YES="true"; shift ;;
     -h|--help)
-      echo "Usage: $0 [--ip <PUBLIC_IP>] [--tunnel-port <443|NAT_PORT>] [--dns-port <53|NAT_PORT>] [--profile <my|id>] [-y|--yes]"
+      echo "Usage: $0 [--ip <PUBLIC_IP>] [--tunnel-port <443|NAT_PORT>] [--dns-port <53|NAT_PORT>] [--profile <my|id>] [-u|--update] [-y|--yes]"
       exit 0
       ;;
     *) shift ;;
@@ -128,6 +131,206 @@ prompt_read() {
   fi
   printf -v "$var_name" '%s' "$val"
 }
+
+# --- CLI Helper Installer (Supports update, mint, status, logs, restart) ---
+install_server_cli() {
+  cat > /usr/local/bin/rdns-server-cli <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG="/etc/rdns/server.yaml"
+CA_KEY="/etc/rdns/ca.key"
+
+case "${1:-}" in
+  mint)
+    prof="${2:-exit}"
+    days="${3:-365}"
+    if [[ ! -f "$CONFIG" ]]; then
+      echo "Config file not found: $CONFIG" >&2
+      exit 1
+    fi
+    /usr/local/bin/rdns-server -mint-token -config "$CONFIG" -cakey "$CA_KEY" -profile "$prof"
+    ;;
+  status)
+    if command -v systemctl &>/dev/null; then
+      systemctl status rdns-server --no-pager
+    elif command -v rc-service &>/dev/null; then
+      rc-service rdns-server status
+    fi
+    ;;
+  logs)
+    if [[ -f /var/log/rdns-server.log ]]; then
+      tail -f /var/log/rdns-server.log
+    elif command -v journalctl &>/dev/null; then
+      journalctl -u rdns-server -f
+    fi
+    ;;
+  restart)
+    if command -v systemctl &>/dev/null; then
+      systemctl restart rdns-server
+      echo "rdns-server restarted."
+    elif command -v rc-service &>/dev/null; then
+      rc-service rdns-server restart
+    fi
+    ;;
+  update)
+    echo "Memeriksa dan memperbarui binary rdns-server & rdns-certs..."
+    arch="$(uname -m)"
+    case "$arch" in
+      x86_64|amd64) r_arch="amd64" ;;
+      aarch64|arm64) r_arch="arm64" ;;
+      *) echo "Arsitektur tidak didukung: $arch" >&2; exit 1 ;;
+    esac
+    tag="v0.2.1"
+    base_url="https://github.com/risqinf/rdns/releases/download/${tag}"
+    tmp_dir="$(mktemp -d)"
+    echo "Mengunduh rdns-server (${tag})..."
+    if curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_dir}/rdns-server" "${base_url}/rdns-server-linux-${r_arch}" && \
+       curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_dir}/rdns-certs" "${base_url}/rdns-certs-linux-${r_arch}"; then
+      chmod 755 "${tmp_dir}/rdns-server" "${tmp_dir}/rdns-certs"
+      if "${tmp_dir}/rdns-server" -version &>/dev/null; then
+        cp -f "${tmp_dir}/rdns-server" /usr/local/bin/rdns-server
+        cp -f "${tmp_dir}/rdns-certs" /usr/local/bin/rdns-certs
+        rm -rf "$tmp_dir"
+        echo "Binary rdns-server berhasil diperbarui ke $(/usr/local/bin/rdns-server -version)"
+        if command -v systemctl &>/dev/null; then
+          systemctl restart rdns-server
+          systemctl status rdns-server --no-pager
+        elif command -v rc-service &>/dev/null; then
+          rc-service rdns-server restart
+          rc-service rdns-server status
+        fi
+      else
+        echo "Binary yang diunduh tidak valid." >&2
+        rm -rf "$tmp_dir"
+        exit 1
+      fi
+    else
+      echo "Gagal mengunduh update dari GitHub." >&2
+      rm -rf "$tmp_dir"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Usage: rdns-server-cli {mint [profile_name] [days]|status|logs|restart|update}"
+    ;;
+esac
+EOF
+  chmod 755 /usr/local/bin/rdns-server-cli
+}
+
+# --- Non-Destructive Update Routine ---
+perform_update() {
+  ui_rule
+  echo -e " ${GREEN}MEMULAI SAFE IN-PLACE UPDATE RDNS SERVER (${GH_TAG})...${NC}"
+  ui_rule
+  local target_ver="${GH_TAG}"
+  local base_url="https://github.com/risqinf/rdns/releases/download/${target_ver}"
+  local tmp_d
+  tmp_d="$(mktemp -d)"
+
+  info "Mengunduh binary rdns-server (${ARCH}) dari GitHub Release (${target_ver})..."
+  if ! curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_d}/rdns-server" "${base_url}/rdns-server-linux-${ARCH}"; then
+    err "Gagal mengunduh binary rdns-server."
+    rm -rf "$tmp_d"
+    exit 1
+  fi
+
+  info "Mengunduh binary rdns-certs (${ARCH}) dari GitHub Release (${target_ver})..."
+  if ! curl -sSL --connect-timeout 10 --max-time 60 -o "${tmp_d}/rdns-certs" "${base_url}/rdns-certs-linux-${ARCH}"; then
+    err "Gagal mengunduh binary rdns-certs."
+    rm -rf "$tmp_d"
+    exit 1
+  fi
+  chmod 755 "${tmp_d}/rdns-server" "${tmp_d}/rdns-certs"
+
+  if ! "${tmp_d}/rdns-server" -version &>/dev/null; then
+    err "Binary rdns-server yang diunduh tidak valid."
+    rm -rf "$tmp_d"
+    exit 1
+  fi
+
+  cp -f "${tmp_d}/rdns-server" /usr/local/bin/rdns-server
+  cp -f "${tmp_d}/rdns-certs" /usr/local/bin/rdns-certs
+  rm -rf "$tmp_d"
+  ok "Binary /usr/local/bin/rdns-server dan rdns-certs diperbarui ke ${target_ver}."
+
+  # Ensure log file exists with proper permissions
+  mkdir -p /var/log /var/lib/rdns 2>/dev/null || true
+  touch /var/log/rdns-server.log 2>/dev/null || true
+  chmod 644 /var/log/rdns-server.log 2>/dev/null || true
+
+  # Update service unit with ExecStartPre
+  if command -v systemctl &>/dev/null; then
+    cat > /etc/systemd/system/rdns-server.service <<EOF
+[Unit]
+Description=rdns-server (exit node: ACL DNS answer + mTLS yamux relay)
+Documentation=https://github.com/risqinf/rdns
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=-/bin/sh -c 'mkdir -p /var/log /var/lib/rdns && touch /var/log/rdns-server.log && chmod 644 /var/log/rdns-server.log 2>/dev/null || true'
+ExecStart=/usr/local/bin/rdns-server -config /etc/rdns/server.yaml
+SyslogIdentifier=rdns-server
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rdns /var/log /run
+ProtectHome=true
+PrivateTmp=true
+LimitNOFILE=65536
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable rdns-server >/dev/null 2>&1 || true
+    systemctl restart rdns-server
+    ok "Service systemd rdns-server berhasil direstart."
+  elif command -v rc-service &>/dev/null; then
+    rc-service rdns-server restart
+    ok "Service OpenRC rdns-server berhasil direstart."
+  fi
+
+  install_server_cli
+  ok "CLI helper /usr/local/bin/rdns-server-cli diperbarui."
+
+  echo ""
+  ui_rule
+  echo -e " ${GREEN}UPDATE RDNS SERVER SELESAI & SUKSES!${NC}"
+  ui_rule
+  printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Versi Binary" "$(/usr/local/bin/rdns-server -version)"
+  printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Konfigurasi" "${GREEN}TERJAGA (/etc/rdns/server.yaml)${NC}"
+  printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Sertifikat & CA" "${GREEN}UTUH (/etc/rdns/ca.crt)${NC}"
+  printf " ${WHITE}%-18s${NC} ${CYAN}:${NC} %b\n" "Pairing Token" "${GREEN}TETAP VALID & AKTIF${NC}"
+  ui_rule
+  exit 0
+}
+
+# --- Check Existing Installation / Update Flag ---
+if [[ "$MODE_UPDATE" == "true" ]]; then
+  perform_update
+fi
+
+if [[ -f "/etc/rdns/server.yaml" && -f "/etc/rdns/ca.crt" && "$AUTO_YES" != "true" ]]; then
+  echo -e " ${YELLOW}[!] Terdeteksi instalasi RDNS Server sebelumnya di sistem ini:${NC}"
+  echo -e "     - Konfigurasi : ${WHITE}/etc/rdns/server.yaml${NC}"
+  echo -e "     - Root CA     : ${WHITE}/etc/rdns/ca.crt${NC}"
+  echo ""
+  echo -e "   ${GREEN}[1] Update Binary & Service (Rekomendasi / Safe In-Place Update)${NC}"
+  echo -e "       Memperbarui binary ke ${GH_TAG} tanpa mengubah sertifikat, port, atau pairing token."
+  echo -e "   ${YELLOW}[2] Re-install / Konfigurasi Ulang (Reset Konfigurasi)${NC}"
+  echo ""
+  prompt_read " Pilih opsi [default: 1]: " EXISTING_CHOICE "1"
+  if [[ "$EXISTING_CHOICE" == "1" || "$EXISTING_CHOICE" == "update" ]]; then
+    perform_update
+  fi
+fi
 
 if [[ "$AUTO_YES" == "true" ]]; then
   SERVER_IP="${INPUT_IP:-$DETECTED_IP}"
@@ -318,6 +521,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
+ExecStartPre=-/bin/sh -c 'mkdir -p /var/log /var/lib/rdns && touch /var/log/rdns-server.log && chmod 644 /var/log/rdns-server.log 2>/dev/null || true'
 ExecStart=/usr/local/bin/rdns-server -config /etc/rdns/server.yaml
 SyslogIdentifier=rdns-server
 NoNewPrivileges=true
@@ -357,51 +561,8 @@ EOF
 fi
 
 # --- Create CLI Helper: rdns-server-cli ---
-cat > /usr/local/bin/rdns-server-cli <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-CONFIG="/etc/rdns/server.yaml"
-CA_KEY="/etc/rdns/ca.key"
-
-case "${1:-}" in
-  mint)
-    prof="${2:-exit}"
-    days="${3:-365}"
-    if [[ ! -f "$CONFIG" ]]; then
-      echo "Config file not found: $CONFIG" >&2
-      exit 1
-    fi
-    /usr/local/bin/rdns-server -mint-token -config "$CONFIG" -cakey "$CA_KEY" -profile "$prof"
-    ;;
-  status)
-    if command -v systemctl &>/dev/null; then
-      systemctl status rdns-server
-    elif command -v rc-service &>/dev/null; then
-      rc-service rdns-server status
-    fi
-    ;;
-  logs)
-    if [[ -f /var/log/rdns-server.log ]]; then
-      tail -f /var/log/rdns-server.log
-    elif command -v journalctl &>/dev/null; then
-      journalctl -u rdns-server -f
-    fi
-    ;;
-  restart)
-    if command -v systemctl &>/dev/null; then
-      systemctl restart rdns-server
-      echo "rdns-server restarted."
-    elif command -v rc-service &>/dev/null; then
-      rc-service rdns-server restart
-    fi
-    ;;
-  *)
-    echo "Usage: rdns-server-cli {mint [profile_name] [days]|status|logs|restart}"
-    ;;
-esac
-EOF
-chmod 755 /usr/local/bin/rdns-server-cli
+install_server_cli
+ok "CLI helper /usr/local/bin/rdns-server-cli terpasang."
 
 # --- Mint First Client Token ---
 token_args=(

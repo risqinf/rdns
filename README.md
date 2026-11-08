@@ -96,6 +96,14 @@ Skrip ini akan secara otomatis:
 > ```bash
 > rdns-server-cli mint <nama_profil> [masa_aktif_hari]
 > ```
+>
+> **Tips Update Server yang Sudah Terinstall:**
+> Jika Anda sudah menginstal `rdns-server` sebelumnya dan ingin mengupdate binary ke versi terbaru tanpa mengubah sertifikat, port, atau pairing token:
+> ```bash
+> rdns-server-cli update
+> # atau jalankan kembali installer dengan flag update:
+> curl -sSL https://raw.githubusercontent.com/risqinf/rdns/main/install-server.sh | bash -s -- --update
+> ```
 
 ---
 
