@@ -11,7 +11,7 @@
 # run on Alpine (musl) AND Rocky (glibc) with no runtime deps. The same
 # build works for the decision node (Rocky) and exit node (Alpine).
 
-VERSION   ?= v0.2.0
+VERSION   ?= v0.2.1
 GO        ?= go
 LDFLAGS   := -s -w -X main.version=$(VERSION)
 

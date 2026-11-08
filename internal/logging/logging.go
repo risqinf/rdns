@@ -104,9 +104,10 @@ func Setup(mode Mode, configLevel, file string) (*slog.Logger, error) {
 	if file != "" {
 		f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
 		if err != nil {
-			return nil, fmt.Errorf("logging: open %s: %w", file, err)
+			fmt.Fprintf(os.Stderr, "logging: warning: cannot open log file %s: %v; falling back to stderr\n", file, err)
+		} else {
+			out = f
 		}
-		out = f
 	}
 	opts := &slog.HandlerOptions{Level: lvl}
 	var w slog.Handler

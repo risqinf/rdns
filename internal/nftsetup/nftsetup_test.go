@@ -21,7 +21,7 @@ func TestRenderIPv4(t *testing.T) {
 		"socket mark 0xd1920d7 accept",
 		`oifname "lo" accept`,
 		"ip daddr { 203.0.113.10 } accept",
-		"udp dport 53 ct mark set 0xd1920d redirect to :5353",
+		"udp dport 53 ct mark set 0xd1920d redirect to :14053",
 		"tcp dport { 80, 443 } ct mark set 0xd1920d redirect to :14300",
 		"udp dport 443 meta mark set 0xd1920d tproxy to :14400 accept",
 		"chain prerouting {",

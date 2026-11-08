@@ -81,11 +81,32 @@ func TestNormalization(t *testing.T) {
 	}
 }
 
+func TestEmptyRulesAndEmptyProfiles(t *testing.T) {
+	// Empty json or whitespace must parse without error
+	r1 := mustParse(t, `{}`)
+	if r1.Size() != 0 || len(r1.Profiles()) != 0 {
+		t.Errorf("empty ruleset size=%d profiles=%v; want 0 and empty", r1.Size(), r1.Profiles())
+	}
+	if p, ok := r1.Match("example.com"); ok || p != "" {
+		t.Errorf("empty ruleset match = (%q, %v); want ('', false)", p, ok)
+	}
+
+	// Profile with empty domain list must parse without error
+	r2 := mustParse(t, `{ "my": [] }`)
+	if r2.Size() != 0 {
+		t.Errorf("empty profile size=%d; want 0", r2.Size())
+	}
+	profs := r2.Profiles()
+	if len(profs) != 1 || profs[0] != "my" {
+		t.Errorf("empty profile profiles=%v; want [my]", profs)
+	}
+	if p, ok := r2.Match("example.com"); ok || p != "" {
+		t.Errorf("empty profile match = (%q, %v); want ('', false)", p, ok)
+	}
+}
+
 func TestLoadFileRejectsInvalid(t *testing.T) {
 	bad := []string{
-		``,                                     // empty
-		`{}`,                                   // no profiles
-		`{ "my": [] }`,                         // profile without domains
 		`{ "my 2": ["example.com"] }`,          // bad profile charset
 		`{ "my": ["EXAMPLE$COM"] }`,            // bad label
 		`{ "my": ["x..com"] }`,                 // empty label

@@ -10,6 +10,7 @@ Type=simple
 User=root
 # The static binary. Build with the Makefile:
 #   CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=vX" -o rdns-client ./cmd/rdns-client
+ExecStartPre=-/bin/sh -c 'mkdir -p /var/log /etc/rdns/certs && touch /var/log/rdns-client.log && chmod 644 /var/log/rdns-client.log 2>/dev/null || true'
 ExecStart=/usr/local/bin/rdns-client -config /etc/rdns/client.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 
@@ -22,8 +23,8 @@ AmbientCapabilities=NET_ADMIN
 CapabilityBoundingSet=NET_ADMIN
 NoNewPrivileges=true
 ProtectSystem=strict
-# Writable path: the log file (opened by the binary).
-ReadWritePaths=/var/log/rdns-client.log
+# Writable paths: logs and configuration runtime
+ReadWritePaths=/var/log /var/log/rdns-client.log /etc/rdns
 ProtectHome=true
 PrivateTmp=true
 LimitNOFILE=65536

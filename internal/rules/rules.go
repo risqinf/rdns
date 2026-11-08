@@ -15,6 +15,7 @@
 package rules
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -80,15 +81,17 @@ func (r *Ruleset) Size() int { return r.size }
 // It validates every profile name and domain, rejects a pattern claimed
 // by two profiles, and normalizes (lowercase, trailing-dot stripped).
 func parse(data []byte) (*Ruleset, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return &Ruleset{bySuffix: make(map[string]string), profiles: make([]string, 0)}, nil
+	}
 	var raw map[string][]string
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("rules: %w", err)
 	}
+	r := &Ruleset{bySuffix: make(map[string]string, 64), profiles: make([]string, 0)}
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("rules: no profiles defined")
+		return r, nil
 	}
-
-	r := &Ruleset{bySuffix: make(map[string]string, 64)}
 
 	// Deterministic iteration order so error messages are stable.
 	profiles := make([]string, 0, len(raw))
@@ -108,7 +111,7 @@ func parse(data []byte) (*Ruleset, error) {
 		}
 		seen[norm] = true
 		if len(raw[p]) == 0 {
-			return nil, fmt.Errorf("rules: profile %q has no domains", p)
+			continue
 		}
 		for _, pat := range raw[p] {
 			n, err := normalize(pat)

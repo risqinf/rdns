@@ -81,7 +81,7 @@ func (c *Config) defaults() {
 		c.Priority = -150
 	}
 	if c.DNSTarget == 0 {
-		c.DNSTarget = 5353
+		c.DNSTarget = 14053
 	}
 	if c.SNITarget == 0 {
 		c.SNITarget = 14300
