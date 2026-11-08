@@ -17,11 +17,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 # The SO_MARK value must match client.yaml tunnel_mark.
 SyslogIdentifier=rdns-client
 
-# Hardening (keeps the small footprint honest). nftables needs NET_ADMIN;
-# SO_MARK on a connected socket needs NET_ADMIN too on modern kernels.
-AmbientCapabilities=NET_ADMIN
-CapabilityBoundingSet=NET_ADMIN
-NoNewPrivileges=true
+# Hardening (keeps the small footprint honest).
 ProtectSystem=strict
 # Writable paths: logs and configuration runtime
 ReadWritePaths=/var/log /var/log/rdns-client.log /etc/rdns

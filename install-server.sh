@@ -164,8 +164,28 @@ do_mint() {
   fi
   echo ""
   echo -e " ${YELLOW}Membuat token pairing baru untuk profil '${prof}'...${NC}"
+  
+  local public_ip
+  public_ip="$(curl -s4 --max-time 3 https://api.ipify.org || curl -s4 --max-time 3 https://ifconfig.me || hostname -I | awk '{print $1}')"
+  public_ip="$(echo "$public_ip" | tr -d '[:space:]\\')"
+
+  local t_port d_port
+  t_port=$(grep -E '^\s*tunnel:' "$CONFIG" 2>/dev/null | awk -F: '{print $NF}' | tr -d ' "' || echo "443")
+  d_port=$(grep -E '^\s*dns:' "$CONFIG" 2>/dev/null | awk -F: '{print $NF}' | tr -d ' "' || echo "53")
+
   local tok
-  tok="$(/usr/local/bin/rdns-server -mint-token -config "$CONFIG" -cakey "$CA_KEY" -profile "$prof")"
+  if [[ -x /usr/local/bin/rdns-certs ]]; then
+    tok="$(/usr/local/bin/rdns-certs token \
+      -ca /etc/rdns/ca.crt \
+      -cakey "$CA_KEY" \
+      -profile "$prof" \
+      -server "${public_ip}:${t_port}" \
+      -server-name "exit-${prof}.rdns" \
+      -dns "${public_ip}:${d_port}" \
+      -ttl "$(( days * 24 ))h")"
+  else
+    tok="$(/usr/local/bin/rdns-server -mint-token -config "$CONFIG" -cakey "$CA_KEY" -profile "$prof")"
+  fi
   echo "$tok" > "$TOKEN_FILE" 2>/dev/null || true
   chmod 600 "$TOKEN_FILE" 2>/dev/null || true
   echo ""
